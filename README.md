@@ -32,7 +32,7 @@ To apply the model to a custom dataset, the data tree should be constructed as:
                 ├── image_2.png
                 .......
                 ├── image_n.png
-		  ├── edges
+          ├── edges
                 ├── image_1.png
                 ├── image_2.png
                 .......
