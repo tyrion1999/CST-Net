@@ -8,27 +8,6 @@ from Code.material.attention_utils import SpatialAttention,ChannelAttention
 from Code.material.backbone.Res2Net import res2net50_v1b_26w_4s
 from torch.nn import CrossEntropyLoss, Dropout, Softmax, Linear, Conv2d, LayerNorm
 
-class PAA_kernel(nn.Module):
-    def __init__(self, in_channel, out_channel, receptive_size=3):
-        super(PAA_kernel, self).__init__()
-        self.conv0 = conv(in_channel, out_channel, 1)
-        self.conv1 = conv(out_channel, out_channel, kernel_size=(1, receptive_size))
-        self.conv2 = conv(out_channel, out_channel, kernel_size=(receptive_size, 1))
-        self.conv3 = conv(out_channel, out_channel, 3, dilation=receptive_size)
-        self.Hattn = self_attn(out_channel, mode='h')
-        self.Wattn = self_attn(out_channel, mode='w')
-
-    def forward(self, x):
-        x = self.conv0(x)
-        x = self.conv1(x)
-        x = self.conv2(x)
-
-        Hx = self.Hattn(x)
-        Wx = self.Wattn(x)
-
-        x = self.conv3(Hx + Wx)
-        return x
-
 class conv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, dilation=1, groups=1, padding='same',bias=False, bn=True, relu=False):
         super(conv, self).__init__()
@@ -120,7 +99,7 @@ class self_attn(nn.Module):
 def swish(x):
     return x * torch.sigmoid(x)
 
-#Activation function
+# Activation function
 ACT2FN = {"gelu": torch.nn.functional.gelu, "relu": torch.nn.functional.relu, "swish": swish}
 
 
@@ -136,15 +115,35 @@ class BasicConv2d(nn.Module):
         x = self.bn(x)
         return x
 
+class SA_kernel(nn.Module):
+    def __init__(self, in_channel, out_channel, receptive_size=3):
+        super(SA_kernel, self).__init__()
+        self.conv0 = conv(in_channel, out_channel, 1)
+        self.conv1 = conv(out_channel, out_channel, kernel_size=(1, receptive_size))
+        self.conv2 = conv(out_channel, out_channel, kernel_size=(receptive_size, 1))
+        self.conv3 = conv(out_channel, out_channel, 3, dilation=receptive_size)
+        self.Hattn = self_attn(out_channel, mode='h')
+        self.Wattn = self_attn(out_channel, mode='w')
+
+    def forward(self, x):
+        x = self.conv0(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+
+        Hx = self.Hattn(x)
+        Wx = self.Wattn(x)
+
+        x = self.conv3(Hx + Wx)
+        return x
 
 class SA(nn.Module):
     def __init__(self, in_channel, out_channel):
         super(SA, self).__init__()
 
         self.branch0 = conv(in_channel, out_channel, kernel_size=1)
-        self.branch1 = PAA_kernel(in_channel, out_channel, 3)
-        self.branch2 = PAA_kernel(in_channel, out_channel, 5)
-        self.branch3 = PAA_kernel(in_channel, out_channel, 7)
+        self.branch1 = SA_kernel(in_channel, out_channel,receptive_size=3)
+        self.branch2 = SA_kernel(in_channel, out_channel, receptive_size=5)
+        self.branch3 = SA_kernel(in_channel, out_channel, receptive_size=7)
 
         self.conv_cat = conv(4 * out_channel, out_channel, 3)
         self.conv_res = conv(in_channel, out_channel, 1)
@@ -161,7 +160,7 @@ class SA(nn.Module):
 
         return x
 
-
+# multi-scale feature fusion module
 class MFF(nn.Module):
 
     def __init__(self, channel):
@@ -178,7 +177,6 @@ class MFF(nn.Module):
         self.Spatial_attention = SpatialAttention(kernel_size=7)
         self.upsample = lambda img, size: F.interpolate(img, size=size, mode='bilinear', align_corners=True)
 
-        # ----- CTF block-----
         self.fc = nn.Sequential(
 
             nn.Conv2d(in_channels=32,out_channels=16,padding=1,kernel_size=3,stride=1),
@@ -207,7 +205,6 @@ class MFF(nn.Module):
         f3 = self.conv3(f3)
         f3 = self.conv4(f3)
 
-        # ------ CTF block------
         b, c, W, H = f3.size()  # b:24,c:32 H:44 W:44
         f3 = torch.sigmoid(f3)
 
@@ -221,20 +218,21 @@ class MFF(nn.Module):
         return out
 
 
-class Transformer(nn.Module):
+class StackTransformer(nn.Module):
     def __init__(self,c):
 
-        super(Transformer, self).__init__()
+        super(StackTransformer, self).__init__()
 
-        self.layer = nn.ModuleList()
-        self.encoder_norm = LayerNorm(768, eps=1e-6) # config.hidden_size =768
-        for _ in range(12):
+        self.layer = nn.ModuleList() # 创建了一个名为layer的nn.ModuleList对象，用于存储多个Transformer_Block模块
+        self.encoder_norm = LayerNorm(768, eps=1e-6) # 对输入数据进行标准化处理
+        for _ in range(24):
             layer = Transformer_Block()
-            self.layer.append(copy.deepcopy(layer))
+            self.layer.append(copy.deepcopy(layer)) # 将刚创建的layer模块添加到self.layer列表中。这里使用copy.deepcopy()来创建layer的深层拷贝，以确保每个模块都是独立的。
 
     def forward(self, hidden_states):
 
         for layer_block in self.layer:
+            # 对hidden_states应用layer_block模块，并将返回的新的hidden_states和权重（weights）存储起来。
             hidden_states, weights = layer_block(hidden_states)
 
         encoded = self.encoder_norm(hidden_states)
@@ -264,6 +262,18 @@ class Transformer_Block(nn.Module):
         x = x + h
         return x, weights
 
+import math
+def positional_embedding(length, hidden_dim):
+    position = torch.arange(0, length, dtype=torch.float).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, hidden_dim, 2, dtype=torch.float) * -(math.log(10000.0) / hidden_dim))
+    pos_enc = torch.zeros((length, hidden_dim))
+
+    # Calculate the sine and cosine components of positional encoding
+    pos_enc[:, 0::2] = torch.sin(position * div_term)
+    pos_enc[:, 1::2] = torch.cos(position * div_term)
+
+    return pos_enc
+
 
 class CST_Net(nn.Module):
     def __init__(self, channel=32, n_class=1):
@@ -278,15 +288,15 @@ class CST_Net(nn.Module):
         # ---- dim_768_to_1 ----
         self.dim_768_to_1 = nn.Conv2d(768,1,kernel_size=1,stride=1)
         # self.dim_768_to_3 = nn.Conv2d(768,3,1,1)
-        # ---- Transformer -----
-        self.pos_embed = nn.Parameter(torch.zeros(1, 196, 768))
+        # ---- StackTransformer -----
+        self.pos_embed = nn.Parameter(positional_embedding(14 * 14, 768))
         self.pos_drop = nn.Dropout(p=0.0)
 
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
         self.patch_embedding = PatchEmbedding(in_channels=768, patch_size=1, emb_size=768)
-        self.transformer = Transformer(channel)
+        self.transformer = StackTransformer(channel)
 
-        # ---- Partial Decoder ----
+        # ---- multi-scale feature fusion module----
         self.MFF = MFF(channel)
 
         # ---- reverse attention branch 4 ----
@@ -308,10 +318,10 @@ class CST_Net(nn.Module):
 
         # ---- edge branch ----
         # self.edge_conv1_x1_256_to_64 = BasicConv2d(256, 64, kernel_size=1)
-        self.edge_conv1_x2_rbf_32_to_64 = BasicConv2d(32, 64, kernel_size=1)
-        self.edge_conv2 = BasicConv2d(64, 64, kernel_size=3, padding=1)
-        self.edge_conv3 = BasicConv2d(64, 64, kernel_size=3, padding=1)
-        self.edge_conv4 = BasicConv2d(64, n_class, kernel_size=3, padding=1)
+        self.boundary_conv1_x2_rbf_32_to_64 = BasicConv2d(32, 64, kernel_size=1)
+        self.boundary_supervise_2 = BasicConv2d(64, 64, kernel_size=3, padding=1)
+        self.boundary_supervise_3 = BasicConv2d(64, 64, kernel_size=3, padding=1)
+        self.boundary_supervise_4 = BasicConv2d(64, n_class, kernel_size=3, padding=1)
 
 
         # ----- contour -----
@@ -338,24 +348,26 @@ class CST_Net(nn.Module):
         sa_3 = self.sa_3(x4)
 
 
-        x = self.edge_conv1_x2_rbf_32_to_64(sa_1) # [24, 32, 32, 32]
+        x = self.boundary_conv1_x2_rbf_32_to_64(sa_1) # [24, 32, 32, 32]
 
-        x = self.edge_conv2(x)
-        edge_guidance = self.edge_conv3(x)
-        lateral_edge = self.edge_conv4(edge_guidance)
-        lateral_edge = F.interpolate(lateral_edge,scale_factor=8,mode='bilinear')
+        x = self.boundary_supervise_2(x)
+        boundary_guidance = self.boundary_supervise_3(x)
+        boundary_lateral = self.boundary_supervise_4(boundary_guidance)
+        boundary_lateral = F.interpolate(boundary_lateral,scale_factor=8,mode='bilinear')
 
-        # ---- global guidance ----
+        # ---- multi-scale feature fusion module----
         ra5_feat = self.MFF(sa_3, sa_2, sa_1)
 
-        # ---- Transformer ---
-
+        # ---- StackTransformer ---
         ra5_feat = F.interpolate(ra5_feat,size=(14,14),mode='bilinear')
 
         ra5_feat = ra5_feat.view(B,196,-1)
-
         ra5_feat = self.pos_drop(ra5_feat + self.pos_embed)
         ra5_feat = ra5_feat.view(B, 768, 14, -1)
+        #
+        # ra5_feat = ra5_feat.view(B, 196, -1)
+        # ra5_feat = self.pos_drop(ra5_feat + self.pos_embed)
+        # ra5_feat = ra5_feat.view(B, 768, 14, 14)
         ra5_feat = self.patch_embedding(ra5_feat)
         ra5_feat  = ra5_feat.view(B,768,196)
 
@@ -380,7 +392,7 @@ class CST_Net(nn.Module):
         x = -1*(torch.sigmoid(crop_4)) + 1
         x = x.expand(-1, 2048, -1, -1).mul(x4)
 
-        x = torch.cat((self.ra4_conv1(x), F.interpolate(edge_guidance, scale_factor=1/4, mode='bilinear')), dim=1)
+        x = torch.cat((self.ra4_conv1(x), F.interpolate(boundary_guidance, scale_factor=1/4, mode='bilinear')), dim=1)
         x = F.relu(self.ra4_conv2(x))
         x = F.relu(self.ra4_conv3(x))
         x = F.relu(self.ra4_conv4(x))
@@ -393,7 +405,7 @@ class CST_Net(nn.Module):
         x = -1*(torch.sigmoid(crop_3)) + 1
         x = x.expand(-1, 1024, -1, -1).mul(x3)
 
-        x = torch.cat((self.ra3_conv1(x), F.interpolate(edge_guidance, scale_factor=1/2, mode='bilinear')), dim=1)
+        x = torch.cat((self.ra3_conv1(x), F.interpolate(boundary_guidance, scale_factor=1/2, mode='bilinear')), dim=1)
         x = F.relu(self.ra3_conv2(x))
         x = F.relu(self.ra3_conv3(x))
         ra3_feat = self.ra3_conv4(x)
@@ -405,14 +417,14 @@ class CST_Net(nn.Module):
 
         x = -1*(torch.sigmoid(crop_2)) + 1
         x = x.expand(-1, 512, -1, -1).mul(x2)
-        x = torch.cat((self.ra2_conv1(x), F.interpolate(edge_guidance, scale_factor=1, mode='bilinear')), dim=1)
+        x = torch.cat((self.ra2_conv1(x), F.interpolate(boundary_guidance, scale_factor=1, mode='bilinear')), dim=1)
         x = F.relu(self.ra2_conv2(x))
         x = F.relu(self.ra2_conv3(x))
         ra2_feat = self.ra2_conv4(x)
         x = ra2_feat + crop_2
         lateral_map_2 = F.interpolate(x,scale_factor=8, mode='bilinear') # [1,1,352,352]
 
-        return lateral_map_5, lateral_map_4, lateral_map_3, lateral_map_2, lateral_edge
+        return lateral_map_5, lateral_map_4, lateral_map_3, lateral_map_2, boundary_lateral
 
 
 
@@ -423,4 +435,14 @@ if __name__ == '__main__':
 
     out = ras(input_tensor)
     print(out[0].shape)
-    print(ras)
+    # print(ras) # 打印网络结构
+    import thop
+
+    # 创建一个示例输入张量
+    input_tensor = torch.randn(1, 3, 352, 352).to(device)
+
+    # 使用thop来估算FLOP
+    flops, params = thop.profile(ras, inputs=(input_tensor,))
+
+    print(f"FLOPs: {flops / 1e9} G FLOPs")  # 打印出FLOP的结果，以十亿（G）为单位
+
