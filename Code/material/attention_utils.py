@@ -25,7 +25,6 @@ class ChannelAttention(nn.Module):
 class SpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super(SpatialAttention, self).__init__()
-
         self.conv1 = nn.Conv2d(2, 32, kernel_size, padding=kernel_size//2, bias=False)
         self.sigmoid = nn.Sigmoid()
 
