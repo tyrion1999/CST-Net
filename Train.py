@@ -73,22 +73,22 @@ def train(train_loader, model, optimizer, epoch, train_save):
             print('{} Epoch [{:03d}/{:03d}], Step [{:04d}/{:04d}], [ lateral-1: {:.4f} , lateral-2: {:.4f}, lateral-3: {:0.4f}, lateral-4: {:0.4f}, lateral-5: {:0.4f} , Dice:{:0.4f} , Jaccard:{:0.4f} ]'.
                     format(datetime.now(), epoch, opt.epoch, i, total_step,loss_record1.show(),loss_record2.show(), loss_record3.show(), loss_record4.show(), loss_record5.show(),Dice,Jaccard))
     # ---- save model_lung_infection ----
-    save_path = './Snapshots/save_weights_ablation_study_color/{}/'.format(train_save) # the Path where the generated .pth weights file is saved
+    save_path = '/home/stu/zy/CST-Net/Snapshots/save_weights_{}/'.format(train_save) # 生成的.pth权重文件保存的路径
     os.makedirs(save_path, exist_ok=True)
 
-    if (epoch+1) % 10 == 0: # Save the .pth weights file every 10 epochs
-        torch.save(model.state_dict(), save_path + 'CST-Net-%d-PGS224.pth' % (epoch+1))
-        print('[Saving Snapshot:]', save_path + 'CST-Net-%d-PGS224.pth' % (epoch+1))
+    if (epoch+1) % 10 == 0: # 每隔10个epoch就save一次.pth权重文件
+        torch.save(model.state_dict(), save_path + 'CST-Net-%d-PH2.pth' % (epoch+1))
+        print('[Saving Snapshot:]', save_path + 'CST-Net-%d-PH2.pth' % (epoch+1))
 
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # hyper-parameters
-    parser.add_argument('--epoch', type=int, default=150,help='epoch number')
+    parser.add_argument('--epoch', type=int, default=50,help='epoch number')
     parser.add_argument('--lr', type=float, default=1e-4,help='learning rate')
     parser.add_argument('--batchsize', type=int, default=24,help='training batch size')
-    parser.add_argument('--trainsize', type=int, default=352,help='set the size of training sample') # Size of training images
+    parser.add_argument('--trainsize', type=int, default=352,help='set the size of training sample') # 训练图片的尺寸
     parser.add_argument('--clip', type=float, default=0.5,help='gradient clipping margin')
     parser.add_argument('--decay_rate', type=float, default=0.1,help='decay rate of learning rate')
     parser.add_argument('--decay_epoch', type=int, default=50,help='every n epochs decay learning rate')
@@ -103,7 +103,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_path', type=str,default='/home/stu/zy/data/PGS224/train')
     parser.add_argument('--is_semi', type=bool, default=False,help='if True, you will turn on the `Semi-Inf-Net` mode ')
     parser.add_argument('--is_pseudo', type=bool, default=False,help='if True, you will train the model on pseudo-label')
-    parser.add_argument('--train_save', type=str, default='PGS224_pth',help='If you use custom save path, please edit `--is_semi=True` and `--is_pseudo=True`')
+    parser.add_argument('--train_save', type=str, default='PGS',help='If you use custom save path, please edit `--is_semi=True` and `--is_pseudo=True`')
 
     opt = parser.parse_args()
 
@@ -116,16 +116,15 @@ if __name__ == '__main__':
 
     else:
         raise ValueError('Invalid backbone parameters: {}'.format(opt.backbone))
-    # ====== add the parameter ========
+    # ====== 为model加上参数 ========
     model = CST_Net(channel=opt.net_channel, n_class=opt.n_classes).to(device) # opt.net_channel==32 ,opt.n_classes==1
 
     if torch.cuda.device_count() > 1:
         print("Let's use {0} GPUs!".format(torch.cuda.device_count()))
-        print('Number of available GPU:',torch.cuda.device_count())
-        model = nn.DataParallel(model, device_ids=[0,1,2,3]).cuda() # use multiple GPU for training
+        print('avaliable GPU ：',torch.cuda.device_count())
+        model = nn.DataParallel(model, device_ids=[0,1,2,3]).cuda() # 用了多块GPU进行训练
 
     if opt.is_semi and opt.backbone == 'Res2Net50': # false
-        print('Load weights from pseudo-label trained weights file')
         model.load_state_dict(torch.load('./Snapshots/save_weights/Inf-Net_Pseduo/Inf-Net_pseudo_100.pth'))
     else:
         print('Not loading weights from weights file')
@@ -135,7 +134,9 @@ if __name__ == '__main__':
         train_save = 'Inf-Net_Pseudo'
     else:
         print('Use custom save path')
-        train_save = opt.train_save
+
+        train_save = opt.train_save # PGS
+        print("555666",train_save)
 
     # ---- calculate FLOPs and Params ----
     if opt.is_thop: # false
@@ -162,7 +163,7 @@ if __name__ == '__main__':
     total_step = len(train_loader)
 
     # ---- start !! -----
-    print("#"*30, "\nStart Training (CST-Net-{})\n{}\nThis code is written for 'CST-Net "
+    print("#"*30, "\nStart Training (Inf-Net-{})\n{}\nThis code is written for 'CST-Net "
                     "\nPlease cite the paper if you use this code and dataset. "
                     "And any questions feel free to contact me "
                     "via E-mail (666zy666@163.com)\n\n".format(opt.backbone, opt), "#"*30)
