@@ -76,6 +76,7 @@ class ResMlp(nn.Module):
         self.act_fn = ACT2FN["swish"]
         self.dropout = nn.Dropout(0.1)
         self.avgpool = nn.AdaptiveAvgPool2d((196, 768))
+        self.relu = nn.ReLU()
         self._init_weights()
 
     def _init_weights(self):
@@ -85,18 +86,25 @@ class ResMlp(nn.Module):
         nn.init.normal_(self.fc2.bias, std=1e-6)
 
     def forward(self, x):
-        h = x
+        # # ============ mlp+的代码 ===============
+        # h = x
+        # x = self.fc1(x)
+        # x = self.act_fn(x)
+        # x = self.dropout(x)
+        # x = self.fc2(x)
+        # x = x + h
+        # x = self.act_fn(x)
+        # x = self.dropout(x)
+        # x = self.fc3(x)
+        # x = self.dropout(x)
+        # x = x + h
+        # x = self.avgpool(x)
+
+        # ============ mlp的代码 ===============
         x = self.fc1(x)
-        x = self.act_fn(x)
+        x = self.relu(x)
         x = self.dropout(x)
         x = self.fc2(x)
-        x = x + h
-        x = self.act_fn(x)
-        x = self.dropout(x)
-        x = self.fc3(x)
-        x = self.dropout(x)
-        x = x + h
-        x = self.avgpool(x)
 
         return x
 
